@@ -42,10 +42,10 @@ class GameScene extends Phaser.Scene {
     this.buildActors();
     this.buildInteractables();
 
-    // 相机
+    // 相机(zoom 乘 DPR 实现高清渲染,逻辑坐标不变)
     this.cameras.main.setBounds(0, 0, CFG.WORLD_W, CFG.WORLD_H);
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
-    this.cameras.main.setZoom(1.2);
+    this.cameras.main.setZoom(1.2 * CFG.DPR);
 
     // 键盘(桌面调试用)
     this.keys = this.input.keyboard.addKeys('W,A,S,D,SHIFT,SPACE,E');

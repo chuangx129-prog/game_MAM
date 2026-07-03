@@ -15,6 +15,8 @@ class TitleScene extends Phaser.Scene {
   }
 
   create() {
+    // 高清适配:相机放大 DPR 倍,逻辑坐标仍按 960x540 布局
+    this.cameras.main.setZoom(CFG.DPR).centerOn(480, 270);
     if (!this.textures.exists('girl')) generateArt(this);
 
     this.add.rectangle(480, 270, 960, 540, 0x141228);

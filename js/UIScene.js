@@ -4,6 +4,8 @@ class UIScene extends Phaser.Scene {
   G() { return this.scene.get('Game'); }
 
   create() {
+    // 高清适配:相机放大 DPR 倍,HUD 逻辑坐标仍按 960x540 布局
+    this.cameras.main.setZoom(CFG.DPR).centerOn(480, 270);
     this.joy = { x: 0, y: 0 };
     this.joyState = null;
     this.modalOpen = false;
@@ -41,15 +43,17 @@ class UIScene extends Phaser.Scene {
     this.channelLabel = T(480, 276, 15, [0.5, 0.5]);
 
     // ---- 虚拟摇杆 ----
+    // 注意:pointer 坐标是画布物理坐标(逻辑坐标×DPR),这里统一除回逻辑坐标
     this.joyG = this.add.graphics().setDepth(20);
     this.input.on('pointerdown', p => {
       SFX.unlock();
       if (this.modalOpen) return;
-      if (p.x < 520 && p.y > 110) this.joyState = { id: p.id, bx: p.x, by: p.y };
+      const px = p.x / CFG.DPR, py = p.y / CFG.DPR;
+      if (px < 520 && py > 110) this.joyState = { id: p.id, bx: px, by: py };
     });
     this.input.on('pointermove', p => {
       if (this.joyState && p.id === this.joyState.id) {
-        let dx = p.x - this.joyState.bx, dy = p.y - this.joyState.by;
+        let dx = p.x / CFG.DPR - this.joyState.bx, dy = p.y / CFG.DPR - this.joyState.by;
         const d = Math.hypot(dx, dy);
         if (d > 60) { dx *= 60 / d; dy *= 60 / d; }
         this.joy = { x: dx / 60, y: dy / 60 };

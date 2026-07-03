@@ -8,9 +8,8 @@ H5 夜间潜行生存小游戏:躲开妈妈的无影脚,攒够睡眠撑到天亮
 - 国内推荐(EdgeOne):**https://creazymum-9ddtyalu.edgeone.cool/**
 - 海外备用(GitHub Pages):https://chuangx129-prog.github.io/game_MAM/
 
-> EdgeOne 版本目前是「直接上传 zip」部署:游戏更新后运行 `powershell -ExecutionPolicy Bypass -File tools\pack-zip.ps1`
-> 重新生成桌面部署包,到 [EdgeOne Pages 控制台](https://console.cloud.tencent.com/edgeone/pages) 重新上传即可;
-> GitHub Pages 则随 `git push` 自动更新。
+> 两个线上版本都连着本仓库,`git push` 后自动重新部署(EdgeOne 项目走 GitHub 导入;GitHub Pages 原生支持),
+> 无需任何手动操作。`tools/pack-zip.ps1` 仅作备用(生成可手动上传的 zip 部署包)。
 
 ## 怎么玩
 

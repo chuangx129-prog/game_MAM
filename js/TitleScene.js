@@ -75,8 +75,29 @@ class TitleScene extends Phaser.Scene {
       this.scene.start('Game');
     });
 
-    this.add.text(480, 520, '📱 建议横屏游玩  |  💻 桌面:WASD/方向键移动,空格互动,Shift 跑', {
+    this.add.text(480, 522, '📱 建议横屏游玩  |  💻 桌面:WASD/方向键移动,空格互动,Shift 跑', {
       fontSize: '13px', color: '#8a84a8', fontFamily: 'sans-serif',
     }).setOrigin(0.5);
+
+    // ---- 全屏:支持的平台给按钮;iOS 网页没有全屏 API,提示"添加到主屏幕" ----
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (document.fullscreenEnabled || document.webkitFullscreenEnabled) {
+      const fs = this.add.container(886, 42);
+      const bg = this.add.graphics();
+      bg.fillStyle(0x44496e, 0.9); bg.fillRoundedRect(-52, -21, 104, 42, 12);
+      fs.add([bg, this.add.text(0, 0, '⛶ 全屏', { fontSize: '16px', color: '#fff', fontFamily: 'sans-serif' }).setOrigin(0.5)]);
+      fs.setSize(104, 42).setInteractive({ useHandCursor: true });
+      fs.on('pointerdown', () => {
+        try {
+          if (this.scale.isFullscreen) this.scale.stopFullscreen();
+          else this.scale.startFullscreen();
+        } catch (e) { /* ignore */ }
+      });
+    } else if (isIOS && !navigator.standalone) {
+      this.add.text(480, 500, '📱 iPhone/iPad 想全屏?Safari 分享 ▸ 添加到主屏幕,从桌面图标打开', {
+        fontSize: '13px', color: '#ffd166', fontFamily: 'sans-serif',
+      }).setOrigin(0.5);
+    }
   }
 }

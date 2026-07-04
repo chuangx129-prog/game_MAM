@@ -42,22 +42,26 @@ class UIScene extends Phaser.Scene {
     // ---- 蓄力进度条 ----
     this.channelLabel = T(480, 276, 15, [0.5, 0.5]);
 
-    // ---- 虚拟摇杆 ----
+    // ---- 虚拟摇杆(固定位置,常显,大触发区)----
     // 注意:pointer 坐标是画布物理坐标(逻辑坐标×DPR),这里统一除回逻辑坐标
+    this.joyBase = { x: 140, y: 398 };
+    this.joyR = 70;    // 摇杆头最大行程
     this.joyG = this.add.graphics().setDepth(20);
+    const setJoy = p => {
+      let dx = p.x / CFG.DPR - this.joyBase.x, dy = p.y / CFG.DPR - this.joyBase.y;
+      const d = Math.hypot(dx, dy);
+      if (d > this.joyR) { dx *= this.joyR / d; dy *= this.joyR / d; }
+      this.joy = { x: dx / this.joyR, y: dy / this.joyR };
+    };
     this.input.on('pointerdown', p => {
       SFX.unlock();
       if (this.modalOpen) return;
       const px = p.x / CFG.DPR, py = p.y / CFG.DPR;
-      if (px < 520 && py > 110) this.joyState = { id: p.id, bx: px, by: py };
+      // 左下大片区域都算摇杆(按到哪都从固定摇杆中心取向量)
+      if (px < 470 && py > 225) { this.joyState = { id: p.id }; setJoy(p); }
     });
     this.input.on('pointermove', p => {
-      if (this.joyState && p.id === this.joyState.id) {
-        let dx = p.x / CFG.DPR - this.joyState.bx, dy = p.y / CFG.DPR - this.joyState.by;
-        const d = Math.hypot(dx, dy);
-        if (d > 60) { dx *= 60 / d; dy *= 60 / d; }
-        this.joy = { x: dx / 60, y: dy / 60 };
-      }
+      if (this.joyState && p.id === this.joyState.id) setJoy(p);
     });
     const joyEnd = p => {
       if (this.joyState && p.id === this.joyState.id) {
@@ -94,6 +98,18 @@ class UIScene extends Phaser.Scene {
     // ---- 连击提示 ----
     this.comboText = T(866, 384, 14, [0.5, 0.5]);
     this.comboText.setColor('#ffd166');
+
+    // ---- 全屏按钮(iOS 网页不支持全屏 API,自动隐藏)----
+    if (document.fullscreenEnabled || document.webkitFullscreenEnabled) {
+      this.fsBtn = this.add.circle(934, 100, 20, 0x44496e, 0.85).setDepth(21).setInteractive();
+      this.add.text(934, 100, '⛶', { fontSize: '18px', color: '#fff' }).setOrigin(0.5).setDepth(22);
+      this.fsBtn.on('pointerdown', () => {
+        try {
+          if (this.scale.isFullscreen) this.scale.stopFullscreen();
+          else this.scale.startFullscreen();
+        } catch (e) { /* 某些浏览器需要手势链,失败就算了 */ }
+      });
+    }
   }
 
   // ================= 每帧刷新 =================
@@ -106,8 +122,9 @@ class UIScene extends Phaser.Scene {
 
     const st = G.momState();
     if (S.chase) {
-      this.momFace.setText('😡');
-      this.stateText.setText(S.chasePhase === 'return' ? '消气回房中…' : '暴怒追击!!');
+      this.momFace.setText(S.fury ? '🔥' : '😡');
+      this.stateText.setText(S.chasePhase === 'return' ? '消气回房中…'
+        : (S.fury ? '喷火暴走!!!' : '暴怒追击!!'));
     } else {
       this.momFace.setText(S.wake < 40 ? st.icon : (S.wake < 70 ? '😟' : '😡'));
       this.stateText.setText(`妈妈·${st.name}`);
@@ -164,13 +181,17 @@ class UIScene extends Phaser.Scene {
     const chasing = S.chase && S.chasePhase !== 'return' && !S.over;
     this.patrolText.setVisible((!!S.patrol || chasing) && !S.over);
     if (chasing) {
-      // 整个环境闪红光
-      const a = 0.28 + 0.22 * Math.sin(time / 110);
-      this.vig.fillStyle(0xff0022, 0.05 + 0.05 * Math.sin(time / 110));
+      // 整个环境闪红光(喷火暴走时是橙色火光,更急促)
+      const speed = S.fury ? 70 : 110;
+      const color = S.fury ? 0xff5500 : 0xff0022;
+      const a = 0.28 + 0.22 * Math.sin(time / speed);
+      this.vig.fillStyle(color, (S.fury ? 0.07 : 0.05) + 0.05 * Math.sin(time / speed));
       this.vig.fillRect(0, 0, 960, 540);
-      this.vig.lineStyle(16, 0xff0022, a);
+      this.vig.lineStyle(16, color, a);
       this.vig.strokeRect(8, 8, 944, 524);
-      this.patrolText.setText('😡 妈妈暴怒了!快跑!爸爸房间是安全的 🚪');
+      this.patrolText.setText(S.fury
+        ? '🔥 妈妈在喷火!只有躲起来才行!爸爸也在逃命!'
+        : '😡 妈妈暴怒了!快跑!爸爸房间是安全的 🚪');
     } else if (S.patrol && !S.over) {
       const a = 0.22 + 0.18 * Math.sin(time / 140);
       this.vig.lineStyle(12, 0xff3355, a);
@@ -198,15 +219,15 @@ class UIScene extends Phaser.Scene {
     this.wakeLabel.setVisible(S.sleeping && !S.over);
     this.comboText.setText(S.sleeping && S.combo >= 2 ? `连躲 x${S.combo}` : '');
 
-    // 摇杆
+    // 摇杆(固定位置,常显;按住时高亮)
     this.joyG.clear();
-    if (this.joyState) {
-      const { bx, by } = this.joyState;
-      this.joyG.fillStyle(0xffffff, 0.12); this.joyG.fillCircle(bx, by, 52);
-      this.joyG.lineStyle(2, 0xffffff, 0.25); this.joyG.strokeCircle(bx, by, 52);
-      this.joyG.fillStyle(0xffffff, 0.35);
-      this.joyG.fillCircle(bx + this.joy.x * 48, by + this.joy.y * 48, 22);
-    }
+    const jb = this.joyBase, jActive = !!this.joyState;
+    this.joyG.fillStyle(0xffffff, jActive ? 0.13 : 0.06);
+    this.joyG.fillCircle(jb.x, jb.y, 66);
+    this.joyG.lineStyle(2, 0xffffff, jActive ? 0.3 : 0.14);
+    this.joyG.strokeCircle(jb.x, jb.y, 66);
+    this.joyG.fillStyle(0xffffff, jActive ? 0.4 : 0.18);
+    this.joyG.fillCircle(jb.x + this.joy.x * 52, jb.y + this.joy.y * 52, 26);
   }
 
   // ================= 提示气泡 =================
@@ -327,7 +348,10 @@ class UIScene extends Phaser.Scene {
         : (S.plan.blanket ? '你治好了妈妈的无影脚,全家一觉到天亮 💤' : g.text);
       c.add(this.add.text(0, -36, sub, { fontSize: '18px', color: '#c9c4de', fontFamily: 'sans-serif' }).setOrigin(0.5));
     } else {
-      c.add(this.add.text(0, -92, e.sub, {
+      const sub = (reason === 'caught' && S.fury)
+        ? '「马桶!是!谁!没!冲?!」\n你在火光中被拎了起来……记住:上完要冲水。'
+        : e.sub;
+      c.add(this.add.text(0, -92, sub, {
         fontSize: '18px', color: '#c9c4de', align: 'center', fontFamily: 'sans-serif',
         wordWrap: { width: 520 },
       }).setOrigin(0.5));

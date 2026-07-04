@@ -8,7 +8,8 @@ class GameScene extends Phaser.Scene {
     this.S = {
       hp: 100, sleep: 0, wake: 0, stars: 0, bladder: 35, minute: 0,
       sleeping: false, hidden: false, patrol: false, over: false, reason: null,
-      chase: false, chasePhase: null,       // 暴怒追逐:hunt 追/wander 搜/knock 砸门/return 回房
+      chase: false, chasePhase: null,       // 暴怒追逐:hunt 追/wander 搜/knock 砸门/beaten 打爸爸/return 回房
+      fury: false,                          // 喷火暴走(起夜发现马桶没冲)
       combo: 0, dodges: 0, kicks: 0, ice: 0, escapes: 0,
       kickSlow: 1,                          // 踢腿间隔倍率(安眠计划↑,踩玩具↓)
       calm: 1,                              // 噪音影响倍率(床头牛奶后 0.75)
@@ -16,13 +17,16 @@ class GameScene extends Phaser.Scene {
       buffs: { milkUntil: 0, milkX: 1.5, iceUntil: 0, slippers: false, shield: 0 },   // milkX:牛奶倍率(厨房1.5/爸爸牌3)
       flags: { catFood: false, catFed: false, teddyFound: false, couchTries: 0,
                milkUsed: false, momMilk: false, blanket: false, toys: 0, trips: 0,
-               bladderWarned: false, sleepFull: false, wakeWarned: false },
+               bladderWarned: false, sleepFull: false, wakeWarned: false,
+               unflushed: false },           // 没冲马桶的"罪证"(妈妈起夜发现=喷火暴走)
       iceReadyAt: 0,
     };
     this.channel = null; this.tele = null; this.near = null;
     this.lastNoise = 0; this.stepAcc = 0; this.prevRoom = 'mom';
     this.momFacing = Math.PI; this.momPath = null; this.momPathGoal = null;
     this.lastSeen = null; this.lastSeenAt = 0; this.knockT0 = 0; this.lastKnock = 0;
+    this.dadState = 'bed'; this.dadHideSpot = null; this.dadPath = null;
+    this.playerHideSpot = null; this.furyEndAt = 0; this.lastFireAt = 0;
     // 一晚 4 次起夜窗口(约 23:55 / 1:20 / 2:50 / 4:30 前后浮动)
     this.patrolTimes = [
       Phaser.Math.Between(45, 75), Phaser.Math.Between(130, 170),
@@ -131,6 +135,8 @@ class GameScene extends Phaser.Scene {
     // 猫(手里有猫粮时头顶出现❗)
     this.cat = this.add.image(390, 612, 'cat').setDepth(9);
     this.catAlert = this.add.text(390, 584, '❗', { fontSize: '20px' }).setOrigin(0.5).setDepth(30).setVisible(false);
+    // 爸爸逃命时的哭哭脸
+    this.dadCry = this.add.text(0, 0, '😭', { fontSize: '20px' }).setOrigin(0.5).setDepth(30).setVisible(false);
     // 妈妈的视野扇形(追逐时显示)
     this.coneG = this.add.graphics().setDepth(36);
     // 夜店彩灯(爸爸跳舞时的灯光层,盖在爸爸房间上)
@@ -158,12 +164,14 @@ class GameScene extends Phaser.Scene {
     this.inter = [
       { x: 258, y: 172, r: 62, label: '🛏 上床睡觉',
         enabled: () => !S.patrol && !S.chase, act: () => this.enterBed() },
-      { x: 475, y: 138, r: 58, label: '🚽 上厕所',
-        enabled: () => S.bladder >= 25, act: () => this.useToilet() },
+      { x: 475, y: 138, r: 58,
+        label: () => (S.flags.unflushed && S.bladder < 25) ? '🚽 回去补冲(销毁证据)' : '🚽 上厕所',
+        enabled: () => S.bladder >= 25 || S.flags.unflushed,
+        act: () => (S.flags.unflushed && S.bladder < 25) ? this.lateFlush() : this.useToilet() },
       { x: 335, y: 178, r: 55, label: '🚪 躲进衣柜',
-        act: () => this.hideAt(335, 92) },
+        act: () => this.hideAt(335, 92, 'wardrobe') },
       { x: 85, y: 548, r: 52, label: '🛋 躲到沙发后',
-        act: () => this.hideAt(150, 416) },
+        act: () => this.hideAt(150, 416, 'couch') },
       { x: 235, y: 548, r: 52, label: '🔍 翻找沙发缝',
         enabled: () => !S.flags.teddyFound, act: () => this.searchCouch() },
       { x: 390, y: 612, r: 74, label: () => (S.flags.catFood && !S.flags.catFed) ? '🐟 喂猫' : '🐱 摸摸猫',
@@ -261,6 +269,9 @@ class GameScene extends Phaser.Scene {
       this.teddyImg.setVisible(!S.hidden).setPosition(this.player.x + 17, this.player.y - 15);
     }
     this.catAlert.setVisible(S.flags.catFood && !S.flags.catFed);
+    // 爸爸逃命/躲藏时头顶挂着哭哭脸
+    const dadScared = this.dadState === 'flee' || this.dadState === 'hidden' || this.dadState === 'beaten';
+    this.dadCry.setVisible(dadScared).setPosition(this.dad.x + 4, this.dad.y - 38);
 
     // 头顶的随身道具图标
     const carry = [];
@@ -515,9 +526,15 @@ class GameScene extends Phaser.Scene {
   }
 
   // ================= 躲藏 =================
-  hideAt(x, y) {
+  hideAt(x, y, spot = null) {
     const S = this.S;
+    // 喷火暴走时爸爸也在抢藏身点,被他占了就进不去
+    if (spot && this.dadHideSpot === spot && (this.dadState === 'flee' || this.dadState === 'hidden')) {
+      this.ui().toast('爸爸(缩在里面):满了满了!快去别处!😭');
+      return;
+    }
     S.hidden = true;
+    this.playerHideSpot = spot;
     this.hidePrev = { x: this.player.x, y: this.player.y };
     this.player.body.setVelocity(0, 0);
     this.player.body.enable = false;
@@ -528,6 +545,7 @@ class GameScene extends Phaser.Scene {
   unhide() {
     const S = this.S;
     S.hidden = false;
+    this.playerHideSpot = null;
     this.player.setAlpha(1).setPosition(this.hidePrev.x, this.hidePrev.y);
     this.player.body.enable = true;
   }
@@ -548,12 +566,26 @@ class GameScene extends Phaser.Scene {
       S.bladder = 0; S.flags.bladderWarned = false;
       this.ui().showChoice('要冲水吗?', '好孩子会冲水(+2⭐),但半夜水声很响…', [
         { label: '冲!我是好孩子 💪', cb: () => {
-          this.S.stars += 2; this.playFlush();
+          this.S.stars += 2; this.S.flags.unflushed = false;
+          this.playFlush();
           this.addNoise(475, 65, 25);
           this.ui().toast('哗————!!(+2⭐)');
         }},
-        { label: '明早再说 🤫' },
+        { label: '明早再说 🤫', cb: () => {
+          this.S.flags.unflushed = true;
+          this.ui().toast('(马桶默默记下了这一切…)');
+        }},
       ]);
+    });
+  }
+
+  // 后悔了可以回来补冲(消除喷火隐患,但半夜水声照样响)
+  lateFlush() {
+    this.startChannel('鼓起勇气按下冲水…', 1500, () => {
+      this.S.flags.unflushed = false;
+      this.playFlush();
+      this.addNoise(475, 65, 25);
+      this.ui().toast('哗——!证据销毁,妈妈起夜不会发现了');
     });
   }
 
@@ -668,6 +700,7 @@ class GameScene extends Phaser.Scene {
 
   onEnterDad() {
     const S = this.S, now = this.time.now;
+    if (S.fury) { this.ui().toast('房间空荡荡的…爸爸已经跑路了 😭 这里不安全!'); return; }
     if (now >= S.iceReadyAt) {
       S.iceReadyAt = now + CFG.ICE_COOLDOWN;
       S.ice++; S.hp = 100;
@@ -837,7 +870,16 @@ class GameScene extends Phaser.Scene {
       prev = p;
     };
     pts.forEach(p => mk(p));
-    mk({ x: 472, y: 118 }, { duration: 4500, onComplete: () => this.playFlush() }); // 在卫生间待一会儿
+    // 在卫生间待一会儿;如果女儿没冲马桶……她会发现的
+    mk({ x: 472, y: 118 }, { duration: 4500, onComplete: () => {
+      if (this.S.flags.unflushed && !this.S.over) {
+        this.floatText(472, 88, '?!!', '#ff5b6e', 32);
+        SFX.kickWarn();
+        this.time.delayedCall(450, () => this.startFuryChase());
+      } else {
+        this.playFlush();
+      }
+    } });
     back.forEach(p => mk(p));
 
     this.tweens.chain({
@@ -878,10 +920,121 @@ class GameScene extends Phaser.Scene {
     this.lastSeenAt = this.time.now;
     this.momPath = null; this.momPathGoal = null; this.knockToastShown = false; this.breakingIn = false;
     this.mom.setTexture('momAwake').setAngle(0);
-    this.floatText(this.mom.x, this.mom.y - 44, '💢💢', '#ff5b6e', 32);
+    this.floatText(this.mom.x, this.mom.y - 44, S.fury ? '🔥💢🔥' : '💢💢', '#ff5b6e', 32);
     this.playChaseBgm();
     this.vibrate(300);
-    this.ui().toast('😡 妈妈暴怒了!!快跑,或者躲起来!爸爸房间是安全的');
+    this.ui().toast(S.fury
+      ? '🔥 喷火模式:比你跑步还快!只有躲起来才能活!'
+      : '😡 妈妈暴怒了!!快跑,或者躲起来!爸爸房间是安全的');
+  }
+
+  // ================= 喷火暴走(起夜发现马桶没冲)=================
+  startFuryChase() {
+    const S = this.S;
+    if (S.over || S.chase) return;
+    S.flags.unflushed = false;              // 罪证已被发现,消耗掉
+    // 巡逻状态直接切暴走
+    this.tweens.killTweensOf(this.mom);
+    if (this.heartEv) { this.heartEv.remove(false); this.heartEv = null; }
+    S.patrol = false;
+    S.fury = true;
+    this.furyEndAt = this.time.now + CFG.FURY_DURATION;
+    this.lastFireAt = 0;
+    this.startChase();
+    this.mom.setTint(0xff8855);             // 烧红了
+    this.dadFlee();                          // 爸爸看势不妙,弃门而逃
+    this.ui().toast('🔥🔥 妈妈发现马桶没冲!彻底暴走!!');
+  }
+
+  chaseSpeed() { return this.S.fury ? CFG.FURY_SPEED : CFG.CHASE_HUNT_SPEED; }
+  giveupMs() { return this.S.fury ? CFG.FURY_GIVEUP : CFG.CHASE_GIVEUP; }
+
+  // 喷火动画:沿面朝方向吐火
+  breatheFire(now) {
+    if (now - this.lastFireAt < 220) return;
+    this.lastFireAt = now;
+    const fx = this.mom.x + Math.cos(this.momFacing) * 34 + Phaser.Math.Between(-8, 8);
+    const fy = this.mom.y + Math.sin(this.momFacing) * 34 + Phaser.Math.Between(-8, 8);
+    const t = this.add.text(fx, fy, '🔥', { fontSize: `${Phaser.Math.Between(18, 30)}px` })
+      .setOrigin(0.5).setDepth(34);
+    this.tweens.add({
+      targets: t,
+      x: fx + Math.cos(this.momFacing) * 48, y: fy + Math.sin(this.momFacing) * 48,
+      alpha: 0, scale: 1.6, duration: 420,
+      onComplete: () => t.destroy(),
+    });
+  }
+
+  // ---- 爸爸逃命三部曲:flee 逃 → hidden 躲 → (被抓 beaten / 平安归位) ----
+  dadFlee() {
+    const spots = { wardrobe: { x: 335, y: 92 }, couch: { x: 150, y: 416 } };
+    let pick = Phaser.Math.Between(0, 1) ? 'wardrobe' : 'couch';
+    if (this.playerHideSpot === pick) pick = (pick === 'wardrobe') ? 'couch' : 'wardrobe';
+    this.dadHideSpot = pick;
+    this.dadState = 'flee';
+    this.dadBlocking = false;
+    this.tweens.killTweensOf(this.dad);
+    this.dadPath = this.navPath(this.dad.x, this.dad.y, pick === 'wardrobe' ? 'momC' : 'livingC');
+    this.dadPath.push(spots[pick]);
+    this.ui().toast('爸爸夺门而逃:「我什么都不知道啊——!」😭');
+  }
+
+  updateDadFlee(dt) {
+    if (this.dadState !== 'flee' || !this.dadPath || !this.dadPath.length) return;
+    const head = this.dadPath[0], dad = this.dad;
+    const dx = head.x - dad.x, dy = head.y - dad.y;
+    const d = Math.hypot(dx, dy);
+    if (d > 1) {
+      const mv = Math.min(CFG.DAD_FLEE_SPEED * dt, d);
+      dad.x += dx / d * mv; dad.y += dy / d * mv;
+    }
+    if (d < 8) this.dadPath.shift();
+    if (!this.dadPath.length) {
+      this.dadState = 'hidden';
+      this.dad.setAlpha(0.4);
+    }
+  }
+
+  // 爸爸在明处被逮到:代女受过,追逐就此结束
+  dadBeaten() {
+    const S = this.S;
+    if (S.chasePhase === 'beaten' || S.over) return;
+    S.chasePhase = 'beaten';
+    this.dadState = 'beaten';
+    this.momPath = null;
+    SFX.hurt(); this.vibrate(300);
+    this.cameras.main.shake(300, 0.012);
+    this.dad.setAngle(90);
+    for (let i = 0; i < 4; i++) {
+      this.time.delayedCall(i * 320, () => {
+        if (S.over) return;
+        SFX.knock();
+        this.floatText(this.dad.x + Phaser.Math.Between(-18, 18), this.dad.y - 26,
+          Phaser.Utils.Array.GetRandom(['💥', '👊', '⭐']), '#ff8899', 26);
+      });
+    }
+    this.ui().toast('妈妈逮住了爸爸!「马桶!是!谁!没!冲?!」');
+    this.time.delayedCall(1100, () => {
+      if (!S.over) this.ui().toast('爸爸:是我是我都是我!😭(女儿,快趁机苟住)');
+    });
+    this.time.delayedCall(2000, () => {
+      if (S.over) return;
+      S.chasePhase = 'hunt';   // 解除定格,进入回房流程
+      this.beginReturn('😮‍💨 妈妈打完收工,拧着爸爸的耳朵回去了…');
+      this.dadRecover(2600);
+    });
+  }
+
+  dadRecover(delay = 0) {
+    this.time.delayedCall(delay, () => {
+      if (this.S.over) return;
+      this.dadState = 'bed';
+      this.dadHideSpot = null;
+      this.tweens.killTweensOf(this.dad);
+      this.dad.setAlpha(1).setAngle(0);
+      this.tweens.add({ targets: this.dad, x: 700, y: 110, duration: 900, ease: 'Quad.InOut' });
+      this.floatText(this.dad.x, this.dad.y - 34, '😵', '#a7c7eb', 20);
+    });
   }
 
   // 追逐 BGM:优先真实音频(sound/追逐.mp3),没加载到就用合成音效
@@ -921,6 +1074,22 @@ class GameScene extends Phaser.Scene {
       if (this.followMomPath(CFG.CHASE_RETURN_SPEED, dt)) this.finishChase();
       return;
     }
+    // ---- 正在教训爸爸:画面定格,后续由 dadBeaten 的定时器推进 ----
+    if (S.chasePhase === 'beaten') return;
+
+    // ---- 喷火暴走的每帧逻辑 ----
+    if (S.fury) {
+      this.updateDadFlee(dt);
+      this.breatheFire(now);
+      if (now > this.furyEndAt) {
+        return this.beginReturn('🔥 妈妈的怒火烧完了…嘟囔着回去睡了');
+      }
+      // 爸爸在明处被追上:代女受过
+      if (this.dadState === 'flee' &&
+          Phaser.Math.Distance.Between(mom.x, mom.y, this.dad.x, this.dad.y) < CFG.CATCH_DIST + 8) {
+        return this.dadBeaten();
+      }
+    }
 
     // ---- 视野侦测 ----
     const see = this.canSee();
@@ -930,19 +1099,19 @@ class GameScene extends Phaser.Scene {
       if (S.chasePhase === 'wander') { S.chasePhase = 'hunt'; this.floatText(mom.x, mom.y - 40, '❗', '#ff5b6e', 26); }
     }
 
-    // ---- 玩家躲进爸爸房间 ----
+    // ---- 玩家躲进爸爸房间(喷火暴走时爸爸跑了,这里不再安全!)----
     const pRoom = this.whichRoom(p.x, p.y);
-    if (pRoom === 'dad') {
+    if (pRoom === 'dad' && !S.fury) {
       // 爸爸在蹦迪:没人堵门,妈妈循声直接破门,一锅端!
       if (S.dance) {
         if (this.momPathGoal !== 'dadKnock') this.setMomPath('dadKnock');
-        if (this.followMomPath(CFG.CHASE_HUNT_SPEED, dt)) this.momBreakIn();
+        if (this.followMomPath(this.chaseSpeed(), dt)) this.momBreakIn();
         return;
       }
       this.dadBlockDoor();   // 爸爸下床,堵到门口
       if (S.chasePhase !== 'knock') {
         if (this.momPathGoal !== 'dadKnock') this.setMomPath('dadKnock');
-        if (this.followMomPath(CFG.CHASE_HUNT_SPEED, dt)) {
+        if (this.followMomPath(this.chaseSpeed(), dt)) {
           S.chasePhase = 'knock'; this.knockT0 = now; this.lastKnock = 0;
         }
       } else {
@@ -970,12 +1139,18 @@ class GameScene extends Phaser.Scene {
 
     // ---- 追 / 搜 ----
     if (S.chasePhase === 'hunt') {
-      const tgt = see ? p : this.lastSeen;
+      let tgt = see ? p : this.lastSeen;
+      // 暴走时谁在明处抓谁(更近者优先)——爸爸可以当"肉盾"
+      if (S.fury && this.dadState === 'flee' && this.canSeeAt(this.dad.x, this.dad.y)) {
+        const dDad = Phaser.Math.Distance.Between(mom.x, mom.y, this.dad.x, this.dad.y);
+        const dTgt = Phaser.Math.Distance.Between(mom.x, mom.y, tgt.x, tgt.y);
+        if (!see || dDad < dTgt) { tgt = this.dad; this.lastSeenAt = now; }
+      }
       if (this.hasLOS(mom.x, mom.y, tgt.x, tgt.y)) {
         // 看得见目标(或目标点):直线冲
         this.momPathGoal = null;
-        const remain = this.momStepToward(tgt.x, tgt.y, CFG.CHASE_HUNT_SPEED, dt);
-        if (!see && remain < 12) {         // 冲到最后目击点没人:四处游荡搜索
+        const remain = this.momStepToward(tgt.x, tgt.y, this.chaseSpeed(), dt);
+        if (!see && tgt !== this.dad && remain < 12) {   // 冲到最后目击点没人:四处游荡搜索
           S.chasePhase = 'wander';
           this.setMomPath(this.randomNavId());
         }
@@ -983,14 +1158,14 @@ class GameScene extends Phaser.Scene {
         // 隔着墙:沿导航图绕过去
         const goal = this.nearestNav(tgt.x, tgt.y);
         if (this.momPathGoal !== goal || !this.momPath || !this.momPath.length) this.setMomPath(goal);
-        this.followMomPath(CFG.CHASE_HUNT_SPEED, dt);
+        this.followMomPath(this.chaseSpeed(), dt);
       }
     } else if (S.chasePhase === 'wander') {
       if (this.followMomPath(CFG.CHASE_WANDER_SPEED, dt)) this.setMomPath(this.randomNavId());
     }
 
     // ---- 找不到人,放弃 ----
-    if (now - this.lastSeenAt > CFG.CHASE_GIVEUP) {
+    if (now - this.lastSeenAt > this.giveupMs()) {
       this.beginReturn('😮‍💨 妈妈找累了,嘟囔着回去睡了…');
     }
   }
@@ -1002,10 +1177,12 @@ class GameScene extends Phaser.Scene {
     S.escapes++;
     this.stopChaseBgm();
     this.coneG.clear();
+    this.mom.clearTint();
     this.ui().toast(msg);
     this.setMomPath('momC', true);
     // 妈妈走了,爸爸回床上继续睡
     if (this.dadBlocking) this.time.delayedCall(1800, () => this.dadBackToBed());
+    if (this.dadState === 'flee' || this.dadState === 'hidden') this.dadRecover(1800);
   }
 
   // ---- 爸爸堵门 / 回床 ----
@@ -1028,10 +1205,11 @@ class GameScene extends Phaser.Scene {
 
   finishChase() {
     const S = this.S;
-    S.chase = false; S.chasePhase = null;
+    S.chase = false; S.chasePhase = null; S.fury = false;
     S.wake = CFG.WAKE_AFTER_CHASE;
     S.flags.wakeWarned = false;
     if (this.dadBlocking) this.dadBackToBed();
+    this.mom.clearTint();
     this.mom.setTexture('mom').setPosition(BED.momSlot.x, BED.momSlot.y);
     this.momPath = null; this.momPathGoal = null;
     this.coneG.clear();
@@ -1040,15 +1218,18 @@ class GameScene extends Phaser.Scene {
 
   // ---- 妈妈的视野:扇形 + 墙体遮挡 ----
   canSee() {
-    const S = this.S, mom = this.mom, p = this.player;
-    if (S.hidden) return false;
-    const d = Phaser.Math.Distance.Between(mom.x, mom.y, p.x, p.y);
+    return !this.S.hidden && this.canSeeAt(this.player.x, this.player.y);
+  }
+
+  canSeeAt(x, y) {
+    const mom = this.mom;
+    const d = Phaser.Math.Distance.Between(mom.x, mom.y, x, y);
     if (d > CFG.VISION_LEN) return false;
     if (d > 55) {   // 55px 内靠听觉,无视角度
-      const ang = Phaser.Math.Angle.Between(mom.x, mom.y, p.x, p.y);
+      const ang = Phaser.Math.Angle.Between(mom.x, mom.y, x, y);
       if (Math.abs(Phaser.Math.Angle.Wrap(ang - this.momFacing)) > CFG.VISION_HALF) return false;
     }
-    return this.hasLOS(mom.x, mom.y, p.x, p.y);
+    return this.hasLOS(mom.x, mom.y, x, y);
   }
 
   hasLOS(x1, y1, x2, y2) {
@@ -1066,8 +1247,8 @@ class GameScene extends Phaser.Scene {
   drawCone() {
     const S = this.S;
     this.coneG.clear();
-    if (!S.chase || S.chasePhase === 'return') return;
-    this.coneG.fillStyle(0xff2244, 0.13);
+    if (!S.chase || S.chasePhase === 'return' || S.chasePhase === 'beaten') return;
+    this.coneG.fillStyle(S.fury ? 0xff6600 : 0xff2244, S.fury ? 0.18 : 0.13);
     this.coneG.slice(this.mom.x, this.mom.y, CFG.VISION_LEN,
       this.momFacing - CFG.VISION_HALF, this.momFacing + CFG.VISION_HALF, false);
     this.coneG.fillPath();
@@ -1101,14 +1282,15 @@ class GameScene extends Phaser.Scene {
     return best;
   }
 
-  setMomPath(goalId, appendBed = false) {
+  // 通用寻路:从任意点沿导航图走到目标节点(妈妈和逃命的爸爸共用)
+  navPath(fromX, fromY, goalId) {
     const nodes = NAV.nodes;
     const adj = {};
     for (const [a, b] of NAV.edges) {
       (adj[a] = adj[a] || []).push(b);
       (adj[b] = adj[b] || []).push(a);
     }
-    const start = this.nearestNav(this.mom.x, this.mom.y);
+    const start = this.nearestNav(fromX, fromY);
     // BFS
     const prev = { [start]: null };
     const q = [start];
@@ -1122,13 +1304,20 @@ class GameScene extends Phaser.Scene {
     const path = [];
     let cur = goalId in prev ? goalId : start;
     while (cur) { path.unshift({ x: nodes[cur].x, y: nodes[cur].y }); cur = prev[cur]; }
+    return path;
+  }
+
+  setMomPath(goalId, appendBed = false) {
+    const path = this.navPath(this.mom.x, this.mom.y, goalId);
     if (appendBed) path.push({ x: BED.momSlot.x, y: BED.momSlot.y });
     this.momPath = path;
     this.momPathGoal = goalId;
   }
 
   randomNavId() {
-    const pool = Object.keys(NAV.nodes).filter(id => id !== 'dadKnock' && id !== this.momPathGoal);
+    // 游荡不进爸爸房间(dadKnock/dadC 排除)
+    const pool = Object.keys(NAV.nodes).filter(id =>
+      id !== 'dadKnock' && id !== 'dadC' && id !== this.momPathGoal);
     return Phaser.Utils.Array.GetRandom(pool);
   }
 
@@ -1142,6 +1331,8 @@ class GameScene extends Phaser.Scene {
     this.stopChaseBgm();
     this.stopDance();
     this.coneG.clear();
+    this.mom.clearTint();
+    if (this.dadCry) this.dadCry.setVisible(false);
     if (this.heartEv) { this.heartEv.remove(false); this.heartEv = null; }
     if (reason === 'caught') {
       this.mom.setTexture('momAwake');

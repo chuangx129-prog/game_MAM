@@ -25,6 +25,11 @@ const CFG = {
   CHASE_GIVEUP: 9000,                 // 多久没看到人就放弃 ms
   KNOCK_MS: 3400,                     // 砸爸爸房门的时长 ms
   WAKE_AFTER_CHASE: 35,               // 追完回去睡,吵醒值重置为
+  // 喷火暴走(起夜发现马桶没冲):比跑步还快,只能躲
+  FURY_SPEED: 192,                    // 暴走追击速度(玩家跑步185,跑不掉!)
+  FURY_GIVEUP: 18000,                 // 暴走追丢放弃时间(普通的×2)
+  FURY_DURATION: 32000,               // 暴走硬上限,烧完自动消气
+  DAD_FLEE_SPEED: 118,                // 爸爸逃命速度
 };
 
 // 妈妈追逐用的导航图(节点在门洞/房间中心,保证连线不穿墙)
@@ -35,7 +40,8 @@ const NAV = {
     hallC:      { x: 480, y: 320 },
     hallE:      { x: 736, y: 318 },
     bath:       { x: 475, y: 170 },
-    dadKnock:   { x: 736, y: 284 },   // 爸爸房门口(她进不去)
+    dadKnock:   { x: 736, y: 284 },   // 爸爸房门口(平时她进不去)
+    dadC:       { x: 745, y: 150 },   // 爸爸房间内(只有喷火暴走时会杀进去)
     livingDoor: { x: 245, y: 424 },
     livingC:    { x: 300, y: 540 },
     livingE:    { x: 395, y: 585 },
@@ -45,7 +51,7 @@ const NAV = {
   },
   edges: [
     ['momC', 'momDoor'], ['momDoor', 'hallC'], ['momDoor', 'livingDoor'],
-    ['hallC', 'bath'], ['hallC', 'hallE'], ['hallE', 'dadKnock'], ['hallE', 'kitchenDoor'],
+    ['hallC', 'bath'], ['hallC', 'hallE'], ['hallE', 'dadKnock'], ['dadKnock', 'dadC'], ['hallE', 'kitchenDoor'],
     ['livingDoor', 'livingC'], ['livingC', 'livingE'],
     ['kitchenDoor', 'kitchenC'], ['kitchenC', 'kitchenE'],
   ],
@@ -130,6 +136,8 @@ const DAD_TIPS = [
   '爸爸:那只小熊其实是你妈小时候的宝贝…她抱着它一定睡得香。',
   '爸爸:你妈踢人是因为睡不安稳。小熊、热牛奶、毯子…对症下药。',
   '爸爸:地上的玩具收一收,你妈起夜踩到会更暴躁。',
+  '爸爸:马桶没冲这种事,你妈起夜要是发现了…神仙都救不了,我也只能跑。',
+  '爸爸:她要是喷火了就躲起来!那个速度谁都跑不过!',
 ];
 
 // 开场教学

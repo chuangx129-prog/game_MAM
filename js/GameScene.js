@@ -301,6 +301,8 @@ class GameScene extends Phaser.Scene {
     // ---- 暴怒追逐 ----
     if (S.chase) this.updateChase(dt, time);
     else this.coneG.clear();
+    // 爸爸逃命/回房寻路(独立每帧,不受追逐阶段早退影响)
+    this.updateDad(dt);
 
     // ---- 夜店彩灯:爸爸房间蹦迪灯光 ----
     if (S.dance) {
@@ -968,30 +970,44 @@ class GameScene extends Phaser.Scene {
   // ---- 爸爸逃命三部曲:flee 逃 → hidden 躲 → (被抓 beaten / 平安归位) ----
   dadFlee() {
     const spots = { wardrobe: { x: 335, y: 92 }, couch: { x: 150, y: 416 } };
-    let pick = Phaser.Math.Between(0, 1) ? 'wardrobe' : 'couch';
-    if (this.playerHideSpot === pick) pick = (pick === 'wardrobe') ? 'couch' : 'wardrobe';
+    // 逃向离妈妈最远的藏身点(被女儿占的排除)——真正地逃跑,而不是撞向妈妈
+    const pick = Object.keys(spots)
+      .sort((a, b) =>
+        Phaser.Math.Distance.Between(spots[b].x, spots[b].y, this.mom.x, this.mom.y) -
+        Phaser.Math.Distance.Between(spots[a].x, spots[a].y, this.mom.x, this.mom.y))
+      .find(s => s !== this.playerHideSpot) || 'couch';
     this.dadHideSpot = pick;
     this.dadState = 'flee';
     this.dadBlocking = false;
     this.tweens.killTweensOf(this.dad);
-    this.dadPath = this.navPath(this.dad.x, this.dad.y, pick === 'wardrobe' ? 'momC' : 'livingC');
+    this.dadPath = this.navPath(this.dad.x, this.dad.y, this.nearestNav(spots[pick].x, spots[pick].y));
     this.dadPath.push(spots[pick]);
     this.ui().toast('爸爸夺门而逃:「我什么都不知道啊——!」😭');
   }
 
-  updateDadFlee(dt) {
-    if (this.dadState !== 'flee' || !this.dadPath || !this.dadPath.length) return;
+  // 爸爸沿导航路径移动(逃命 flee / 挨打后回房 return),两者都不穿墙
+  updateDad(dt) {
+    const st = this.dadState;
+    if ((st !== 'flee' && st !== 'return') || !this.dadPath || !this.dadPath.length) return;
     const head = this.dadPath[0], dad = this.dad;
     const dx = head.x - dad.x, dy = head.y - dad.y;
     const d = Math.hypot(dx, dy);
+    const speed = st === 'flee' ? CFG.DAD_FLEE_SPEED : CFG.CHASE_RETURN_SPEED;
     if (d > 1) {
-      const mv = Math.min(CFG.DAD_FLEE_SPEED * dt, d);
+      const mv = Math.min(speed * dt, d);
       dad.x += dx / d * mv; dad.y += dy / d * mv;
     }
     if (d < 8) this.dadPath.shift();
     if (!this.dadPath.length) {
-      this.dadState = 'hidden';
-      this.dad.setAlpha(0.4);
+      if (st === 'flee') {
+        this.dadState = 'hidden';
+        dad.setAlpha(0.4);
+      } else {   // return:到床,恢复常态
+        this.dadState = 'bed';
+        this.dadHideSpot = null;
+        dad.setAlpha(1).setAngle(0);
+        this.floatText(dad.x, dad.y - 34, '😪', '#a7c7eb', 20);
+      }
     }
   }
 
@@ -1028,12 +1044,13 @@ class GameScene extends Phaser.Scene {
   dadRecover(delay = 0) {
     this.time.delayedCall(delay, () => {
       if (this.S.over) return;
-      this.dadState = 'bed';
-      this.dadHideSpot = null;
       this.tweens.killTweensOf(this.dad);
       this.dad.setAlpha(1).setAngle(0);
-      this.tweens.add({ targets: this.dad, x: 700, y: 110, duration: 900, ease: 'Quad.InOut' });
       this.floatText(this.dad.x, this.dad.y - 34, '😵', '#a7c7eb', 20);
+      // 从当前位置(藏身点/挨打处)沿导航图寻路走回自己房间,不穿墙
+      this.dadPath = this.navPath(this.dad.x, this.dad.y, 'dadC');
+      this.dadPath.push({ x: 700, y: 110 });
+      this.dadState = 'return';
     });
   }
 
@@ -1079,7 +1096,6 @@ class GameScene extends Phaser.Scene {
 
     // ---- 喷火暴走的每帧逻辑 ----
     if (S.fury) {
-      this.updateDadFlee(dt);
       this.breatheFire(now);
       if (now > this.furyEndAt) {
         return this.beginReturn('🔥 妈妈的怒火烧完了…嘟囔着回去睡了');

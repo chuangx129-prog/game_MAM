@@ -9,22 +9,39 @@
 <link rel="icon" href="icon.jpeg">
 <link rel="apple-touch-icon" href="icon.jpeg">
 <style>
-  html,body{margin:0;padding:0;background:#0b0b1a;height:100%;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none}
-  #game{width:100%;height:100%}
+  html,body{margin:0;padding:0;background:#0b0b1a;height:100%;width:100%;overflow:hidden;
+    touch-action:none;-webkit-user-select:none;user-select:none;overscroll-behavior:none;
+    -webkit-tap-highlight-color:transparent}
+  /* 游戏铺满整个可视区域(100dvh 会自动吃掉手机浏览器地址栏) */
+  #game{position:fixed;inset:0;width:100vw;height:100vh;height:100dvh}
+  /* 竖屏时盖一层"请横屏"提示,横屏自动消失(纯 CSS,无输入坐标风险) */
+  #rotate{position:fixed;inset:0;z-index:9999;display:none;background:#0b0b1a;color:#fff;
+    flex-direction:column;align-items:center;justify-content:center;gap:20px;text-align:center;
+    font-family:'PingFang SC','Microsoft YaHei',sans-serif}
+  #rotate .ph{font-size:76px;animation:tip 2s ease-in-out infinite;transform-origin:center}
+  #rotate .t1{font-size:23px;color:#ffd166;font-weight:bold}
+  #rotate .t2{font-size:15px;color:#c9c4de;padding:0 34px;line-height:1.6}
+  @keyframes tip{0%,35%{transform:rotate(0)}55%,100%{transform:rotate(-90deg)}}
+  @media (orientation:portrait){#rotate{display:flex}}
 </style>
 </head>
 <body>
 <div id="game"></div>
+<div id="rotate">
+  <div class="ph">📱</div>
+  <div class="t1">请把手机横过来 🔄</div>
+  <div class="t2">《妈妈的无影脚》是横屏游戏<br>横过来才能全屏、大屏畅玩哦~</div>
+</div>
 <!-- Phaser 引擎本地化(不依赖 CDN,国内手机/微信也能打开) -->
-<script src="js/phaser.min.js?v=9"></script>
+<script src="js/phaser.min.js?v=10"></script>
 <!-- 真实音频(base64 内嵌,file:// 直开也能播放;由 tools/pack-audio.mjs 生成) -->
-<script src="sound/bgm-data.js?v=9"></script>
-<script src="js/data.js?v=9"></script>
-<script src="js/sfx.js?v=9"></script>
-<script src="js/art.js?v=9"></script>
-<script src="js/TitleScene.js?v=9"></script>
-<script src="js/GameScene.js?v=9"></script>
-<script src="js/UIScene.js?v=9"></script>
-<script src="js/main.js?v=9"></script>
+<script src="sound/bgm-data.js?v=10"></script>
+<script src="js/data.js?v=10"></script>
+<script src="js/sfx.js?v=10"></script>
+<script src="js/art.js?v=10"></script>
+<script src="js/TitleScene.js?v=10"></script>
+<script src="js/GameScene.js?v=10"></script>
+<script src="js/UIScene.js?v=10"></script>
+<script src="js/main.js?v=10"></script>
 </body>
 </html>

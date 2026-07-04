@@ -27,6 +27,7 @@ class GameScene extends Phaser.Scene {
     this.lastSeen = null; this.lastSeenAt = 0; this.knockT0 = 0; this.lastKnock = 0;
     this.dadState = 'bed'; this.dadHideSpot = null; this.dadPath = null;
     this.playerHideSpot = null; this.furyEndAt = 0; this.lastFireAt = 0;
+    this.dadMem = this.loadDadMem();   // 跨晚记忆:各藏身点被连续抓到的次数
     // 一晚 4 次起夜窗口(约 23:55 / 1:20 / 2:50 / 4:30 前后浮动)
     this.patrolTimes = [
       Phaser.Math.Between(45, 75), Phaser.Math.Between(130, 170),
@@ -967,22 +968,40 @@ class GameScene extends Phaser.Scene {
     });
   }
 
+  // ---- 爸爸的藏身点记忆(localStorage,跨晚持久) ----
+  loadDadMem() {
+    try {
+      const o = JSON.parse(localStorage.getItem('mam_dadmem_v1') || '{}');
+      return { wardrobe: o.wardrobe | 0, couch: o.couch | 0 };
+    } catch (e) { return { wardrobe: 0, couch: 0 }; }
+  }
+  saveDadMem() {
+    try { localStorage.setItem('mam_dadmem_v1', JSON.stringify(this.dadMem)); } catch (e) { /* ignore */ }
+  }
+
   // ---- 爸爸逃命三部曲:flee 逃 → hidden 躲 → (被抓 beaten / 平安归位) ----
   dadFlee() {
     const spots = { wardrobe: { x: 335, y: 92 }, couch: { x: 150, y: 416 } };
-    // 逃向离妈妈最远的藏身点(被女儿占的排除)——真正地逃跑,而不是撞向妈妈
-    const pick = Object.keys(spots)
-      .sort((a, b) =>
-        Phaser.Math.Distance.Between(spots[b].x, spots[b].y, this.mom.x, this.mom.y) -
-        Phaser.Math.Distance.Between(spots[a].x, spots[a].y, this.mom.x, this.mom.y))
-      .find(s => s !== this.playerHideSpot) || 'couch';
+    const all = Object.keys(spots);
+    const distToMom = k => Phaser.Math.Distance.Between(spots[k].x, spots[k].y, this.mom.x, this.mom.y);
+    // 候选:没被放弃(连续被抓 < 阈值)且没被女儿占;实在没得选就将就
+    let pool = all.filter(s => s !== this.playerHideSpot && (this.dadMem[s] || 0) < CFG.DAD_ABANDON_AT);
+    if (!pool.length) pool = all.filter(s => s !== this.playerHideSpot);
+    if (!pool.length) pool = all;
+    // 逃向离妈妈最远的候选——真正地逃跑,而不是撞向妈妈
+    const pick = pool.sort((a, b) => distToMom(b) - distToMom(a))[0];
     this.dadHideSpot = pick;
     this.dadState = 'flee';
     this.dadBlocking = false;
     this.tweens.killTweensOf(this.dad);
     this.dadPath = this.navPath(this.dad.x, this.dad.y, this.nearestNav(spots[pick].x, spots[pick].y));
     this.dadPath.push(spots[pick]);
-    this.ui().toast('爸爸夺门而逃:「我什么都不知道啊——!」😭');
+    // 如果因为另一处被抓怕了而改躲这里,借台词把记忆讲出来
+    const other = all.find(s => s !== pick);
+    const switched = other && (this.dadMem[other] || 0) >= CFG.DAD_ABANDON_AT;
+    this.ui().toast(switched
+      ? `爸爸夺门而逃:「${DAD_HIDE_NAMES[other]}被抓怕了,躲${DAD_HIDE_NAMES[pick]}!」😭`
+      : '爸爸夺门而逃:「我什么都不知道啊——!」😭');
   }
 
   // 爸爸沿导航路径移动(逃命 flee / 挨打后回房 return),两者都不穿墙
@@ -1018,6 +1037,14 @@ class GameScene extends Phaser.Scene {
     S.chasePhase = 'beaten';
     this.dadState = 'beaten';
     this.momPath = null;
+    // 记忆:这个藏身点(他逃向的目标)又被连续抓到一次
+    const spot = this.dadHideSpot;
+    let abandoned = false;
+    if (spot) {
+      this.dadMem[spot] = (this.dadMem[spot] || 0) + 1;
+      this.saveDadMem();
+      abandoned = this.dadMem[spot] >= CFG.DAD_ABANDON_AT;
+    }
     SFX.hurt(); this.vibrate(300);
     this.cameras.main.shake(300, 0.012);
     this.dad.setAngle(90);
@@ -1031,7 +1058,10 @@ class GameScene extends Phaser.Scene {
     }
     this.ui().toast('妈妈逮住了爸爸!「马桶!是!谁!没!冲?!」');
     this.time.delayedCall(1100, () => {
-      if (!S.over) this.ui().toast('爸爸:是我是我都是我!😭(女儿,快趁机苟住)');
+      if (S.over) return;
+      this.ui().toast(abandoned
+        ? `爸爸:${DAD_HIDE_NAMES[spot]}被抓了${CFG.DAD_ABANDON_AT}次,我再也不躲那儿了!😤`
+        : '爸爸:是我是我都是我!😭(女儿,快趁机苟住)');
     });
     this.time.delayedCall(2000, () => {
       if (S.over) return;
@@ -1198,7 +1228,14 @@ class GameScene extends Phaser.Scene {
     this.setMomPath('momC', true);
     // 妈妈走了,爸爸回床上继续睡
     if (this.dadBlocking) this.time.delayedCall(1800, () => this.dadBackToBed());
-    if (this.dadState === 'flee' || this.dadState === 'hidden') this.dadRecover(1800);
+    if (this.dadState === 'flee' || this.dadState === 'hidden') {
+      // 爸爸在藏身点成功躲过(没被抓)——连续被抓计数清零
+      if (this.dadHideSpot && (this.dadMem[this.dadHideSpot] || 0) > 0) {
+        this.dadMem[this.dadHideSpot] = 0;
+        this.saveDadMem();
+      }
+      this.dadRecover(1800);
+    }
   }
 
   // ---- 爸爸堵门 / 回床 ----

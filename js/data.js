@@ -30,6 +30,7 @@ const CFG = {
   FURY_GIVEUP: 18000,                 // 暴走追丢放弃时间(普通的×2)
   FURY_DURATION: 32000,               // 暴走硬上限,烧完自动消气
   DAD_FLEE_SPEED: 118,                // 爸爸逃命速度
+  DAD_ABANDON_AT: 3,                  // 同一藏身点连续被抓 N 次,爸爸就再也不躲那儿(跨晚记忆)
 };
 
 // 妈妈追逐用的导航图(节点在门洞/房间中心,保证连线不穿墙)
@@ -123,6 +124,9 @@ const SHOP = [
   { id: 'slippers', name: '🩴 毛绒拖鞋',     desc: '整晚脚步声减半', price: 6 },
   { id: 'tip',      name: '💡 爸爸的情报',   desc: '一条随机小提示', price: 1, repeat: true },
 ];
+
+// 爸爸藏身点的中文名(用于记忆提示文案)
+const DAD_HIDE_NAMES = { wardrobe: '衣柜', couch: '沙发' };
 
 const DAD_TIPS = [
   '爸爸:你的小熊🧸好像掉进沙发缝里了,多翻几次。',

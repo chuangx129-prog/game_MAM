@@ -15,5 +15,6 @@ html = html.replace(/<script src="([^"?]+)(?:\?[^"]*)?"><\/script>/g, (m, src) =
 });
 
 mkdirSync('dist', { recursive: true });
-writeFileSync('dist/single.html', html);
-console.log(`dist/single.html 生成完毕:${(html.length / 1024 / 1024).toFixed(2)} MB`);
+// 入口文件名必须是 index.html —— 艾可秀等平台要求根目录有 index.html/start.html/index.htm
+writeFileSync('dist/index.html', html);
+console.log(`dist/index.html 生成完毕:${(html.length / 1024 / 1024).toFixed(2)} MB`);

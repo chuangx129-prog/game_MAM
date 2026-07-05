@@ -3,7 +3,7 @@
 import { readFileSync } from 'fs';
 import { randomBytes } from 'crypto';
 
-const html = readFileSync('dist/single.html', 'utf8');
+const html = readFileSync('dist/index.html', 'utf8');
 console.log(`上传体积:${(html.length / 1024 / 1024).toFixed(2)} MB`);
 
 const r1 = await fetch('https://mcp.edgeone.site/get_base_url');
